@@ -98,17 +98,32 @@ impl Reg {
             .join(format!("{name}-{vers}.crate"))
     }
 
-    fn authed(&self, headers: &HeaderMap, st: &Persisted) -> Option<String> {
+    /// Auth with hot-reload: the operator mints tokens with the CLI
+    /// (`tick-registry token add <login>`) while the service runs —
+    /// the CLI writes state.json, the service holds its own copy. On
+    /// an in-memory miss, re-read state.json; if the token appeared
+    /// there, merge it in so later hits stay in memory. Cargo's token
+    /// provider sends the token VERBATIM in the Authorization header
+    /// (no Bearer scheme); both spellings are accepted.
+    async fn authed(&self, headers: &HeaderMap) -> Option<String> {
         let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-        // cargo's built-in token provider sends the token VERBATIM in
-        // the Authorization header (no Bearer scheme); accept both
-        // spellings so curl-style Bearer clients work too
         let tok = v.strip_prefix("Bearer ").unwrap_or(v).trim();
         let h = sha256_hex(tok.as_bytes());
-        st.tokens
-            .iter()
-            .find(|(_, hash)| **hash == h)
-            .map(|(l, _)| l.clone())
+        {
+            let st = self.state.read().await;
+            if let Some((l, _)) = st.tokens.iter().find(|(_, hash)| **hash == h) {
+                return Some(l.clone());
+            }
+        }
+        let disk = std::fs::read(self.root.join("state.json")).ok()?;
+        let parsed: Value = serde_json::from_slice(&disk).ok()?;
+        let (login, _) = parsed["tokens"]
+            .as_object()?
+            .into_iter()
+            .find(|(_, hash)| hash.as_str() == Some(h.as_str()))?;
+        let mut st = self.state.write().await;
+        st.tokens.insert(login.clone(), h);
+        Some(login.clone())
     }
 }
 
@@ -224,8 +239,7 @@ async fn download(
 
 async fn publish(State(reg): State<RegArc>, headers: HeaderMap, body: Bytes) -> Response {
     let login = {
-        let st = reg.state.read().await;
-        match reg.authed(&headers, &st) {
+        match reg.authed(&headers).await {
             Some(l) => l,
             None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
         }
@@ -335,8 +349,7 @@ async fn yank_flip(
     to: bool,
 ) -> Response {
     let login = {
-        let st = reg.state.read().await;
-        match reg.authed(headers, &st) {
+        match reg.authed(headers).await {
             Some(l) => l,
             None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
         }
@@ -430,8 +443,7 @@ async fn add_owners(
     Json(body): Json<Value>,
 ) -> Response {
     let login = {
-        let st = reg.state.read().await;
-        match reg.authed(&headers, &st) {
+        match reg.authed(&headers).await {
             Some(l) => l,
             None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
         }
@@ -475,8 +487,7 @@ async fn remove_owners(
     Json(body): Json<Value>,
 ) -> Response {
     let login = {
-        let st = reg.state.read().await;
-        match reg.authed(&headers, &st) {
+        match reg.authed(&headers).await {
             Some(l) => l,
             None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
         }
@@ -634,8 +645,7 @@ async fn pkg_index_file(
 
 async fn pkg_publish(State(reg): State<RegArc>, headers: HeaderMap, body: Bytes) -> Response {
     let login = {
-        let st = reg.state.read().await;
-        match reg.authed(&headers, &st) {
+        match reg.authed(&headers).await {
             Some(l) => l,
             None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
         }
@@ -779,8 +789,7 @@ async fn pkg_yank_flip(
     to: bool,
 ) -> Response {
     let login = {
-        let st = reg.state.read().await;
-        match reg.authed(headers, &st) {
+        match reg.authed(headers).await {
             Some(l) => l,
             None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
         }
@@ -843,4 +852,34 @@ async fn pkg_unyank(
     AxPath((name, version)): AxPath<(String, String)>,
 ) -> Response {
     pkg_yank_flip(&reg, &headers, &name, &version, false).await
+}
+
+#[cfg(test)]
+mod hot_reload_tests {
+    use super::*;
+
+    /// The CLI (`tick-registry token add`) writes state.json while the
+    /// service holds its own in-memory copy — production bit us on
+    /// exactly this. A second Reg on the same root is the CLI; the
+    /// first must authenticate the token it never saw minted.
+    #[tokio::test]
+    async fn tokens_minted_after_boot_authenticate() {
+        use axum::http::HeaderMap;
+        let root = tempfile::tempdir().unwrap();
+        let service = Reg::new(root.path(), "http://127.0.0.1:1").unwrap();
+        let cli = Reg::new(root.path(), "http://127.0.0.1:1").unwrap();
+        let token = mint_token(&cli, "late-minter").await.unwrap();
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::AUTHORIZATION,
+            axum::http::HeaderValue::from_str(&token).unwrap(),
+        );
+        let login = service
+            .authed(&h)
+            .await
+            .expect("hot-reloaded token must authenticate");
+        assert_eq!(login, "late-minter");
+        // and the second hit stays in memory (no disk read needed)
+        assert_eq!(service.authed(&h).await.unwrap(), "late-minter");
+    }
 }
