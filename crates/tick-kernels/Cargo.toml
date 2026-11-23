@@ -1,0 +1,13 @@
+[package]
+name = "tick-kernels"
+description = "Ternary compute core: Tri/TernaryMat vocabulary, tq1_0 packing, q8_K quantization, NEON/SVE dot kernels, f16 helpers, lock-free pool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["science"]
+keywords = ["llm", "ternary", "bitnet", "inference"]
+
+[dependencies]
+libc.workspace = true

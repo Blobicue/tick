@@ -1,0 +1,19 @@
+[package]
+name = "tick-engine"
+description = "BitNet b1.58 inference engine: flash-attention regimes, greedy generation, tickfile emission"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["science"]
+keywords = ["llm", "ternary", "bitnet", "inference"]
+
+[dependencies]
+tick-kernels.workspace = true
+tick-format.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tick-token.workspace = true
+tick-format.workspace = true

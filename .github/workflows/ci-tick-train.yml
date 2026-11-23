@@ -1,0 +1,37 @@
+name: tick-train
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/tick-train/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-train.yml"
+  pull_request:
+    paths:
+      - "crates/tick-train/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-train.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+      - name: clippy
+        run: cargo clippy --locked -p tick-train --all-targets -- -D warnings
+      - name: test
+        run: cargo test --locked -p tick-train
+      - name: build examples
+        run: cargo build --locked -p tick-train --examples

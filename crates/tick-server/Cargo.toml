@@ -1,0 +1,20 @@
+[package]
+name = "tick-server"
+description = "Wedge-free OpenAI-compatible server for tick-engine with plugin support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["science"]
+keywords = ["llm", "ternary", "bitnet", "inference"]
+
+[dependencies]
+tick-engine.workspace = true
+tick-kernels.workspace = true
+tick-token.workspace = true
+tick-format.workspace = true
+axum.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+serde_json.workspace = true

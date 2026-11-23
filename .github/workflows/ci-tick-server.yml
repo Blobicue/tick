@@ -1,0 +1,37 @@
+name: tick-server
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/tick-server/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-server.yml"
+  pull_request:
+    paths:
+      - "crates/tick-server/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-server.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+      - name: clippy
+        run: cargo clippy --locked -p tick-server --all-targets -- -D warnings
+      - name: test
+        run: cargo test --locked -p tick-server
+      - name: build examples
+        run: cargo build --locked -p tick-server --examples

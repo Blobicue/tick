@@ -1,0 +1,37 @@
+name: tick-kernels
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/tick-kernels/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-kernels.yml"
+  pull_request:
+    paths:
+      - "crates/tick-kernels/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-kernels.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+      - name: clippy
+        run: cargo clippy --locked -p tick-kernels --all-targets -- -D warnings
+      - name: test
+        run: cargo test --locked -p tick-kernels
+      - name: build examples
+        run: cargo build --locked -p tick-kernels --examples

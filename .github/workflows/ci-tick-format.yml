@@ -1,0 +1,37 @@
+name: tick-format
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/tick-format/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-format.yml"
+  pull_request:
+    paths:
+      - "crates/tick-format/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/ci-tick-format.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+      - name: clippy
+        run: cargo clippy --locked -p tick-format --all-targets -- -D warnings
+      - name: test
+        run: cargo test --locked -p tick-format
+      - name: build examples
+        run: cargo build --locked -p tick-format --examples

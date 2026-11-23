@@ -1,0 +1,13 @@
+[package]
+name = "tick-format"
+description = "Weight containers: tickfile v0 native format (layer-streamed, mmap) and GGUF v3 import reader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["science"]
+keywords = ["llm", "ternary", "bitnet", "inference"]
+
+[dependencies]
+libc.workspace = true

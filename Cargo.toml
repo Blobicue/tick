@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tick-kernels",
+    "crates/tick-format",
+    "crates/tick-token",
+    "crates/tick-engine",
+    "crates/tick-train",
+    "crates/tick-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Blobicue/tick"
+homepage = "https://github.com/Blobicue/tick"
+
+[workspace.dependencies]
+tick-kernels = { path = "crates/tick-kernels", version = "0.1.0" }
+tick-format = { path = "crates/tick-format", version = "0.1.0" }
+tick-token = { path = "crates/tick-token", version = "0.1.0" }
+tick-engine = { path = "crates/tick-engine", version = "0.1.0" }
+libc = "0.2"
+axum = { version = "0.8", features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+serde_json = { version = "1", features = ["preserve_order"] }

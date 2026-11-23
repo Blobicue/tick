@@ -1,0 +1,16 @@
+[package]
+name = "tick-token"
+description = "llama-bpe tokenizer: regex-free scanner over codepoint flags, GPT-2 merges, chat templates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["science"]
+keywords = ["llm", "ternary", "bitnet", "inference"]
+
+[dependencies]
+tick-format.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
