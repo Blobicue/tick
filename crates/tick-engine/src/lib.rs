@@ -10,7 +10,10 @@
 #![allow(
     clippy::needless_range_loop,
     clippy::approx_constant,
-    clippy::type_complexity
+    clippy::type_complexity,
+    // chunks_exact (not as_chunks): keeps the older-toolchain portability
+    // the reference-shaped rope/pair loops were written against.
+    clippy::chunks_exact_to_as_chunks
 )]
 
 pub mod model;
