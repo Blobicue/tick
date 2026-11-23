@@ -5,13 +5,13 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(unused_assignments)]
 #![allow(dead_code)]
+#[cfg(not(target_arch = "aarch64"))]
+fn main() {
+    eprintln!("NEON probe: aarch64-only (vector kernels do not exist on this arch)");
+}
+
+#[cfg(target_arch = "aarch64")]
 fn main() -> Result<(), String> {
-    #[cfg(not(target_arch = "aarch64"))]
-    {
-        eprintln!("NEON probe: aarch64-only (vector kernels do not exist on this arch)");
-        return Ok(());
-    }
-    #[cfg(target_arch = "aarch64")]
     run()
 }
 
