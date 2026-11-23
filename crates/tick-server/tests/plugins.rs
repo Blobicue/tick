@@ -104,12 +104,16 @@ async fn plugin_routes_never_park_behind_generation() {
         saw_busy,
         "never observed busy=true — generation not overlapping"
     );
+    // 1s, not tighter: this must hold on a loaded machine (the
+    // reference box runs the fleet under ambient load). A parked
+    // handler would hang on the ~10-minute abandoned generation, so
+    // 1s still proves non-parking decisively.
     assert!(
-        !(worst_health >= Duration::from_millis(100)),
+        !(worst_health >= Duration::from_millis(1000)),
         "health parked: worst {worst_health:?}"
     );
     assert!(
-        !(worst_plugin >= Duration::from_millis(100)),
+        !(worst_plugin >= Duration::from_millis(1000)),
         "plugin route parked: worst {worst_plugin:?}"
     );
     // and the wedge-free property, precisely: both routes answered
