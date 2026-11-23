@@ -459,19 +459,22 @@ async fn add_owners(
     if new_users.is_empty() {
         return err_json(StatusCode::BAD_REQUEST, "users array required");
     }
-    let mut st = reg.state.write().await;
-    match st.owners.get_mut(&name) {
-        None => return err_json(StatusCode::NOT_FOUND, "no such crate"),
-        Some(owners) => {
-            if !owners.contains(&login) {
-                return err_json(
-                    StatusCode::FORBIDDEN,
-                    &format!("token owner {login} does not own crate {name}"),
-                );
-            }
-            for u in new_users {
-                if !owners.contains(&u) {
-                    owners.push(u);
+    // scope the write guard: save_state takes a READ on the same lock
+    {
+        let mut st = reg.state.write().await;
+        match st.owners.get_mut(&name) {
+            None => return err_json(StatusCode::NOT_FOUND, "no such crate"),
+            Some(owners) => {
+                if !owners.contains(&login) {
+                    return err_json(
+                        StatusCode::FORBIDDEN,
+                        &format!("token owner {login} does not own crate {name}"),
+                    );
+                }
+                for u in new_users {
+                    if !owners.contains(&u) {
+                        owners.push(u);
+                    }
                 }
             }
         }
@@ -500,24 +503,29 @@ async fn remove_owners(
                 .collect()
         })
         .unwrap_or_default();
-    let mut st = reg.state.write().await;
-    let owners_len = match st.owners.get(&name) {
-        None => return err_json(StatusCode::NOT_FOUND, "no such crate"),
-        Some(o) => {
-            if !o.contains(&login) {
-                return err_json(
-                    StatusCode::FORBIDDEN,
-                    &format!("token owner {login} does not own crate {name}"),
-                );
+    let owners_len = {
+        let st = reg.state.read().await;
+        match st.owners.get(&name) {
+            None => return err_json(StatusCode::NOT_FOUND, "no such crate"),
+            Some(o) => {
+                if !o.contains(&login) {
+                    return err_json(
+                        StatusCode::FORBIDDEN,
+                        &format!("token owner {login} does not own crate {name}"),
+                    );
+                }
+                o.len()
             }
-            o.len()
         }
     };
     if users.len() >= owners_len {
         return err_json(StatusCode::BAD_REQUEST, "cannot remove the last owner");
     }
-    if let Some(o) = st.owners.get_mut(&name) {
-        o.retain(|o| !users.contains(o));
+    {
+        let mut st = reg.state.write().await;
+        if let Some(o) = st.owners.get_mut(&name) {
+            o.retain(|o| !users.contains(o));
+        }
     }
     let _ = reg.save_state().await;
     ok_json(json!({"ok": true, "msg": "owners successfully removed"}))

@@ -212,7 +212,64 @@ localtick-fixture = { version = "0.1.0", registry = "localtick" }
         "fresh resolution should refuse the yanked version: {stderr}"
     );
 
-    // 5) ETag conditional GET on the index
+    // 5) owners API: add, list, remove, last-owner refusal
+    let r = client
+        .put(format!(
+            "http://127.0.0.1:{}/api/v1/crates/localtick-fixture/owners",
+            srv.port
+        ))
+        .header("authorization", format!("Bearer {token}"))
+        .json(&serde_json::json!({"users": ["second-owner"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "add owner: {}", r.text().await.unwrap());
+    let r = client
+        .get(format!(
+            "http://127.0.0.1:{}/api/v1/crates/localtick-fixture/owners",
+            srv.port
+        ))
+        .send()
+        .await
+        .unwrap();
+    let owners: serde_json::Value = r.json().await.unwrap();
+    let logins: Vec<&str> = owners["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| u["login"].as_str().unwrap())
+        .collect();
+    assert!(logins.contains(&"test-owner") && logins.contains(&"second-owner"));
+    // removing BOTH must be refused (last-owner guard)
+    let r = client
+        .delete(format!(
+            "http://127.0.0.1:{}/api/v1/crates/localtick-fixture/owners",
+            srv.port
+        ))
+        .header("authorization", format!("Bearer {token}"))
+        .json(&serde_json::json!({"users": ["test-owner", "second-owner"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400, "last-owner removal must be refused");
+    let r = client
+        .delete(format!(
+            "http://127.0.0.1:{}/api/v1/crates/localtick-fixture/owners",
+            srv.port
+        ))
+        .header("authorization", format!("Bearer {token}"))
+        .json(&serde_json::json!({"users": ["second-owner"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status(),
+        200,
+        "single removal ok: {}",
+        r.text().await.unwrap()
+    );
+
+    // 6) ETag conditional GET on the index
     let idx_url = format!("http://127.0.0.1:{}/idx/lo/ca/localtick-fixture", srv.port);
     let r1 = client.get(&idx_url).send().await.unwrap();
     let etag = r1
