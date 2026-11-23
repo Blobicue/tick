@@ -1,5 +1,10 @@
 //! bench — kernel/forward microbenchmarks + NEON-vs-scalar spot check.
 
+// NEON kernel probes: only meaningful (and only compilable) where the
+// vector kernels exist. Builds empty on non-aarch64 hosts.
+#![cfg(target_arch = "aarch64")]
+
+
 // Parity/training harness: index loops mirror the reference math.
 #![allow(clippy::needless_range_loop)]
 #![allow(clippy::too_many_arguments)]
