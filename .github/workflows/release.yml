@@ -1,0 +1,78 @@
+name: release
+on:
+  push:
+    tags:
+      - "tick-server-v*"
+      - "release-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # crates.io publish, in dependency order. Skipped cleanly until the
+  # CARGO_REGISTRY_TOKEN secret exists (add it under Settings >
+  # Secrets > Actions; crates.io > Account Settings > API Keys).
+  publish:
+    if: ${{ vars.ENABLE_CRATES_IO_PUBLISH == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo publish (topo order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -e
+          for c in tick-kernels tick-format tick-token tick-engine tick-train tick-plugin tick-example-plugin tick-server; do
+            for attempt in 1 2 3 4 5; do
+              if cargo publish --locked -p "$c"; then break; fi
+              # freshly published deps can take a minute to appear in
+              # the index the resolver sees
+              sleep $((attempt * 30))
+              [ "$attempt" = 5 ] && exit 1
+            done
+            sleep 15
+          done
+
+  # tick-server binaries: native x86_64 + aarch64 (QEMU-emulated
+  # aarch64 runner; the NEON kernels make ARM the primary target).
+  binaries:
+    if: startsWith(github.ref, 'refs/tags/tick-server-v') || startsWith(github.ref, 'refs/tags/release-v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-latest, platform: x86_64 }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-24.04-arm, platform: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p tick-server
+      - name: package
+        run: |
+          ver="${GITHUB_REF#refs/tags/}"
+          dir="tick-server-${ver}-${{ matrix.platform }}"
+          mkdir -p "$dir"
+          cp target/${{ matrix.target }}/release/tick-server "$dir/"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$dir/"
+          tar czf "$dir.tar.gz" "$dir"
+          sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tick-server-${{ matrix.platform }}
+          path: |
+            *.tar.gz
+            *.sha256
+      - name: attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.gz
+            *.sha256
