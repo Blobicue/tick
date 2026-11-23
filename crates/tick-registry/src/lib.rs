@@ -49,7 +49,7 @@ pub struct Persisted {
 
 pub struct Reg {
     pub root: PathBuf,
-    /// public base URL, e.g. https://crates.gameladder.io (no slash)
+    /// public base URL, e.g. `https://crates.gameladder.io` (no slash)
     pub public_url: String,
     pub state: RwLock<Persisted>,
 }
