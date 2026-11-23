@@ -112,6 +112,20 @@ impl Reg {
     }
 }
 
+const PKG_FAMILIES: [&str; 2] = ["tickfile", "adapter"];
+
+fn pkg_index_path(root: &Path, name: &str) -> PathBuf {
+    root.join("pkg-index").join(sparse::index_rel_path(name))
+}
+
+fn pkg_artifact(root: &Path, family: &str, name: &str, vers: &str) -> PathBuf {
+    root.join("artifacts")
+        .join(family)
+        .join(name)
+        .join(vers)
+        .join(format!("{name}-{vers}.tickfile"))
+}
+
 fn err_json(status: StatusCode, detail: &str) -> Response {
     (status, Json(json!({"errors": [{"detail": detail}]}))).into_response()
 }
@@ -137,6 +151,14 @@ pub fn build_router(reg: RegArc) -> axum::Router {
         )
         .route("/api/v1/crates/{name}/{version}/unyank", put(unyank))
         .route("/{crate}/{version}/download", get(download))
+        .route("/pkg-index/config.json", get(pkg_config_json))
+        .route("/pkg-index/{*path}", get(pkg_index_file))
+        .route("/pkg/v1/publish", put(pkg_publish))
+        .route(
+            "/pkg/v1/{name}/{version}/yank",
+            delete(pkg_yank).put(pkg_unyank),
+        )
+        .route("/pkg/{name}/{version}/download", get(pkg_download))
         .with_state(reg)
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024))
 }
@@ -558,4 +580,267 @@ pub async fn mint_token(reg: &RegArc, login: &str) -> Result<String, String> {
     }
     reg.save_state().await?;
     Ok(token)
+}
+
+// ---------- tickfile package family ----------
+// Same index discipline as the cargo family (sparse layout, JSONL
+// records, sha256 cksums, yank), under a separate index root so cargo
+// never sees artifact records. Publish reuses the cargo framing
+// (u32-LE metadata length + JSON + u32-LE length + bytes).
+
+async fn pkg_config_json(State(reg): State<RegArc>) -> Response {
+    ok_json(json!({
+        "dl": format!("{}/pkg/{{name}}/{{version}}/download", reg.public_url),
+        "api": reg.public_url.clone(),
+        "auth-required": false,
+    }))
+}
+
+async fn pkg_index_file(
+    State(reg): State<RegArc>,
+    AxPath(path): AxPath<String>,
+    headers: HeaderMap,
+) -> Response {
+    if path
+        .split('/')
+        .any(|seg| seg == ".." || seg.is_empty() || seg.starts_with('.'))
+    {
+        return err_json(StatusCode::NOT_FOUND, "no such index entry");
+    }
+    let full = reg
+        .root
+        .join("pkg-index")
+        .join(path.strip_prefix("pkg-index/").unwrap_or(&path));
+    match tokio::fs::read(&full).await {
+        Err(_) => err_json(StatusCode::NOT_FOUND, "no such index entry"),
+        Ok(bytes) => {
+            let etag = format!("\"{}\"", sha256_hex(&bytes));
+            if let Some(inm) = headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok())
+            {
+                if inm == etag {
+                    return StatusCode::NOT_MODIFIED.into_response();
+                }
+            }
+            Response::builder()
+                .header(header::ETAG, etag)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body(axum::body::Body::from(bytes))
+                .unwrap()
+        }
+    }
+}
+
+async fn pkg_publish(State(reg): State<RegArc>, headers: HeaderMap, body: Bytes) -> Response {
+    let login = {
+        let st = reg.state.read().await;
+        match reg.authed(&headers, &st) {
+            Some(l) => l,
+            None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
+        }
+    };
+    let parsed = match parse_publish_body(&body) {
+        Ok(p) => p,
+        Err(e) => return err_json(StatusCode::BAD_REQUEST, &e),
+    };
+    let name = match parsed.meta["name"].as_str() {
+        Some(n) if valid_crate_name(n) => n.to_string(),
+        _ => return err_json(StatusCode::BAD_REQUEST, "invalid package name"),
+    };
+    let vers = match parsed.meta["vers"].as_str() {
+        Some(v) => v.to_string(),
+        None => return err_json(StatusCode::BAD_REQUEST, "missing version"),
+    };
+    let family = match parsed.meta["family"].as_str() {
+        Some(f) if PKG_FAMILIES.contains(&f) => f.to_string(),
+        _ => {
+            return err_json(
+                StatusCode::BAD_REQUEST,
+                "family must be tickfile or adapter",
+            )
+        }
+    };
+    {
+        let st = reg.state.read().await;
+        match st.owners.get(&name) {
+            Some(o) if o.contains(&login) => {}
+            Some(_) => return err_json(StatusCode::FORBIDDEN, "not an owner of this package"),
+            None => {}
+        }
+    }
+    let idx_path = pkg_index_path(&reg.root, &name);
+    if let Ok(existing) = std::fs::read_to_string(&idx_path) {
+        for line in existing.lines() {
+            if let Ok(v) = serde_json::from_str::<Value>(line) {
+                if v["vers"] == vers.as_str() {
+                    return err_json(
+                        StatusCode::FORBIDDEN,
+                        &format!("package version {vers} is already uploaded"),
+                    );
+                }
+            }
+        }
+    }
+    if parsed.crate_bytes.is_empty() {
+        return err_json(StatusCode::BAD_REQUEST, "empty artifact");
+    }
+    let cksum = sha256_hex(&parsed.crate_bytes);
+    let file = pkg_artifact(&reg.root, &family, &name, &vers);
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(&file, &parsed.crate_bytes) {
+        return err_json(StatusCode::INTERNAL_SERVER_ERROR, &format!("store: {e}"));
+    }
+    let now = chrono_like_now();
+    let line = json!({
+        "name": name, "vers": vers, "family": family,
+        "cksum": cksum,
+        "bytes": parsed.crate_bytes.len(),
+        "meta": parsed.meta["meta"].clone(),
+        "yanked": false, "v": 1, "pubtime": now,
+    });
+    if let Some(dir) = idx_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    use std::io::Write;
+    let mut f = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&idx_path)
+    {
+        Ok(f) => f,
+        Err(e) => return err_json(StatusCode::INTERNAL_SERVER_ERROR, &format!("index: {e}")),
+    };
+    if writeln!(f, "{line}").is_err() {
+        return err_json(StatusCode::INTERNAL_SERVER_ERROR, "index append failed");
+    }
+    {
+        let mut st = reg.state.write().await;
+        st.owners
+            .entry(name.clone())
+            .or_default()
+            .push(login.clone());
+        st.owners.get_mut(&name).unwrap().dedup();
+        st.summaries.insert(
+            name.clone(),
+            json!({"name": name, "max_version": vers, "description": family,
+                   "updated_at": now}),
+        );
+        st.audit.push(format!(
+            "{now} {login} published pkg {family}/{name}-{vers}"
+        ));
+    }
+    let _ = reg.save_state().await;
+    ok_json(json!({"ok": true, "cksum": cksum}))
+}
+
+async fn pkg_download(
+    State(reg): State<RegArc>,
+    AxPath((name, version)): AxPath<(String, String)>,
+) -> Response {
+    // family comes first in the record; find it
+    let idx_path = pkg_index_path(&reg.root, &name);
+    let content = match std::fs::read_to_string(&idx_path) {
+        Ok(c) => c,
+        Err(_) => return err_json(StatusCode::NOT_FOUND, "no such package"),
+    };
+    let mut family = String::new();
+    let mut yanked = false;
+    for line in content.lines() {
+        if let Ok(v) = serde_json::from_str::<Value>(line) {
+            if v["vers"] == version {
+                family = v["family"].as_str().unwrap_or("tickfile").to_string();
+                yanked = v["yanked"].as_bool().unwrap_or(false);
+            }
+        }
+    }
+    if family.is_empty() {
+        return err_json(StatusCode::NOT_FOUND, "no such package version");
+    }
+    if yanked {
+        return err_json(StatusCode::NOT_FOUND, "package version is yanked");
+    }
+    match tokio::fs::read(pkg_artifact(&reg.root, &family, &name, &version)).await {
+        Err(_) => err_json(StatusCode::NOT_FOUND, "artifact missing"),
+        Ok(bytes) => Response::builder()
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .body(axum::body::Body::from(bytes))
+            .unwrap(),
+    }
+}
+
+async fn pkg_yank_flip(
+    reg: &RegArc,
+    headers: &HeaderMap,
+    name: &str,
+    vers: &str,
+    to: bool,
+) -> Response {
+    let login = {
+        let st = reg.state.read().await;
+        match reg.authed(headers, &st) {
+            Some(l) => l,
+            None => return err_json(StatusCode::FORBIDDEN, "invalid registry token"),
+        }
+    };
+    let idx_path = pkg_index_path(&reg.root, name);
+    let content = match std::fs::read_to_string(&idx_path) {
+        Ok(c) => c,
+        Err(_) => return err_json(StatusCode::NOT_FOUND, "no such package"),
+    };
+    let mut out = String::new();
+    let mut flipped = false;
+    for line in content.lines() {
+        if let Ok(mut v) = serde_json::from_str::<Value>(line) {
+            if v["vers"] == vers {
+                v["yanked"] = json!(to);
+                flipped = true;
+                out.push_str(&v.to_string());
+                out.push('\n');
+                continue;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !flipped {
+        return err_json(StatusCode::NOT_FOUND, "no such package version");
+    }
+    let tmp = idx_path.with_extension("tmp");
+    if std::fs::write(&tmp, out)
+        .and_then(|_| std::fs::rename(&tmp, &idx_path))
+        .is_err()
+    {
+        return err_json(StatusCode::INTERNAL_SERVER_ERROR, "index rewrite failed");
+    }
+    // scope the write guard: save_state takes a READ on the same lock
+    // (tokio RwLock is not reentrant — holding write across it deadlocks)
+    {
+        let mut st = reg.state.write().await;
+        st.audit.push(format!(
+            "{} {login} {} pkg {name}-{vers}",
+            chrono_like_now(),
+            if to { "yanked" } else { "unyanked" }
+        ));
+    }
+    let _ = reg.save_state().await;
+    ok_json(json!({"ok": true}))
+}
+
+async fn pkg_yank(
+    State(reg): State<RegArc>,
+    headers: HeaderMap,
+    AxPath((name, version)): AxPath<(String, String)>,
+) -> Response {
+    pkg_yank_flip(&reg, &headers, &name, &version, true).await
+}
+
+async fn pkg_unyank(
+    State(reg): State<RegArc>,
+    headers: HeaderMap,
+    AxPath((name, version)): AxPath<(String, String)>,
+) -> Response {
+    pkg_yank_flip(&reg, &headers, &name, &version, false).await
 }

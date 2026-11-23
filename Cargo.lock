@@ -889,6 +889,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tick-pkg"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "reqwest",
+ "serde_json",
+ "sha2",
+ "tick-registry",
+ "tokio",
+]
+
+[[package]]
 name = "tick-plugin"
 version = "0.1.0"
 dependencies = [
@@ -911,6 +923,7 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
+ "tick-train",
  "tokio",
 ]
 

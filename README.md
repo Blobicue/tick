@@ -86,6 +86,15 @@ impl TickPlugin for StatusBoard {
 Plugin routes answer while generation streams — `tick-server`'s test
 suite proves it with a live generation in flight.
 
+## Our registry
+
+`crates.gameladder.io` — a tick-registry instance (this workspace's
+`tick-registry` crate): the cargo sparse protocol plus the tickfile
+package family, so `cargo publish --registry tick` ships code and
+`tick-pkg publish` ships weights to the same place. See
+[`crates/tick-registry`](crates/tick-registry) and
+[`crates/tick-pkg`](crates/tick-pkg).
+
 ## Parity discipline
 
 The inference arithmetic mirrors a frozen, sha256-pinned reference

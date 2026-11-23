@@ -20,5 +20,6 @@ flate2 = "1"
 tar = "0.4"
 
 [dev-dependencies]
+tick-train.workspace = true
 reqwest.workspace = true
 tempfile = "3"

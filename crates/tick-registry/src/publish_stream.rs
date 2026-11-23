@@ -37,6 +37,16 @@ pub fn parse_publish_body(body: &[u8]) -> Result<PublishBody, String> {
     Ok(PublishBody { meta, crate_bytes })
 }
 
+/// Build the framed publish body (the inverse of `parse_publish_body`).
+pub fn frame_publish_body(meta_json: &str, file: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(8 + meta_json.len() + file.len());
+    b.extend_from_slice(&(meta_json.len() as u32).to_le_bytes());
+    b.extend_from_slice(meta_json.as_bytes());
+    b.extend_from_slice(&(file.len() as u32).to_le_bytes());
+    b.extend_from_slice(file);
+    b
+}
+
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
