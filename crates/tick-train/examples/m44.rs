@@ -41,9 +41,8 @@ fn main() -> Result<(), String> {
         rms_eps: 1e-5,
         rope_base: 10000.0,
     };
-    let corpus_bytes =
-        std::fs::read("/home/juzz/models/bitnet/wiki.test.raw")
-            .map_err(|e| format!("corpus: {e}"))?;
+    let corpus_bytes = std::fs::read("/home/juzz/models/bitnet/wiki.test.raw")
+        .map_err(|e| format!("corpus: {e}"))?;
     let corpus: &[u8] = &corpus_bytes;
     let split = corpus.len() * 9 / 10;
     let (train_b, val_b) = (&corpus[..split], &corpus[split..]);
@@ -96,7 +95,7 @@ fn main() -> Result<(), String> {
     let steps: usize = std::env::var("TICK_M44_STEPS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(800);
+        .unwrap_or(1000);
     let warmup = 80usize;
     let mut best_val = f32::INFINITY;
     let mut best_step = 0usize;
@@ -178,6 +177,11 @@ fn main() -> Result<(), String> {
     };
     for step in 0..steps {
         let lr = lr * (step.min(warmup) as f32 + 1.0) / (warmup as f32 + 1.0);
+        // NIGHT-1 LAW: fixed 0.0015 past the fast phase is hot — the
+        // run only descended once its oscillation damped on its own
+        // (2.94 terminal). Halve after step 300 and the descent phase
+        // starts immediately instead of ~400 steps later.
+        let lr = if step >= 300 { lr * 0.5 } else { lr };
         zero_accs(&mut acc, &mut embd_acc);
         let mut batch_loss = 0.0f64;
         for _bi in 0..B {
@@ -751,11 +755,10 @@ fn main() -> Result<(), String> {
         }
     }
     println!("train loss: {loss0:.4} -> {mean_loss:.4}; best val {best_val:.4} @ step {best_step}");
-    if !(best_val < 2.5) {
-        return Err(format!(
-            "M4.4 val gate failed: best val {best_val:.4} >= 2.5"
-        ));
-    }
+    // NIGHT-1 LAW (the hard way): gates REPORT, they never abort before
+    // the artifact work — night 1's best checkpoint died in memory when
+    // the val gate returned early and the tickfile was never written.
+    let val_ok = best_val < 2.5;
     // post-warmup oscillation gate. The first ceil(warmup/25)+1 = 2
     // evals sit on the warmup hill (a one-way passage both m42 and m43
     // show); oscillation proper is DEGRADATION after descent begins.
@@ -772,13 +775,17 @@ fn main() -> Result<(), String> {
         "val trace: [{}]  max post-warmup degradation {max_up:.3} (gate < 0.5; m42 single-window degraded +1.46 mid-run)",
         val_trace.iter().map(|v| format!("{v:.2}")).collect::<Vec<_>>().join(", ")
     );
-    if !(max_up < 0.5) {
-        return Err(format!(
-            "M4.4 oscillation gate failed: post-warmup degradation {max_up:.3} >= 0.5"
-        ));
-    }
+    let osc_ok = max_up < 0.5;
     let snap = snap.ok_or("no checkpoint snapshot was taken")?;
-    let snap_val = eval_sampled(&snap.layers, &snap.embd, &snap.out_norm, &cfg, val_b, 8, 256);
+    let snap_val = eval_sampled(
+        &snap.layers,
+        &snap.embd,
+        &snap.out_norm,
+        &cfg,
+        val_b,
+        8,
+        256,
+    );
     let final_val = eval_sampled(&layers, &embd_m, &out_norm, &cfg, val_b, 8, 256);
     println!(
         "snapshot val {snap_val:.4} (best {best_val:.4}); final-state val {final_val:.4}{}",
@@ -788,11 +795,7 @@ fn main() -> Result<(), String> {
             ""
         }
     );
-    if (snap_val - best_val).abs() > 1e-4 {
-        return Err(format!(
-            "snapshot integrity failed: recomputed {snap_val:.4} vs best {best_val:.4}"
-        ));
-    }
+    let snap_ok = (snap_val - best_val).abs() <= 1e-4;
 
     // ---- checkpoint as tickfile FROM THE BEST-VAL SNAPSHOT; engine NLL ----
     let embd16: Vec<u16> = snap
@@ -800,7 +803,7 @@ fn main() -> Result<(), String> {
         .iter()
         .map(|&f| tick_kernels::bitlinear::f32_to_f16(f))
         .collect();
-    let out_path = "/tmp/tiny_m43.tick";
+    let out_path = "/tmp/m44_night2.tick";
     {
         // reuse write_tiny_tickfile via a shim TinyMats-like structure
         let mats = TinyMats {
@@ -852,13 +855,41 @@ fn main() -> Result<(), String> {
     }
     let engine_nll = nll / n as f64;
     println!("engine NLL on the checkpoint: {engine_nll:.4} (trainer {mean_loss:.4})");
-    if !(engine_nll < best_val as f64 + 0.35) || engine_nll.is_nan() {
-        return Err(format!(
-            "checkpoint consistency failed: engine {engine_nll:.4} vs trainer val {best_val:.4}"
-        ));
+    let engine_ok = !(engine_nll < best_val as f64 + 0.35) || engine_nll.is_nan();
+    println!(
+        "gate: val<2.5             {} (best {best_val:.4})",
+        verdict(val_ok)
+    );
+    println!(
+        "gate: post-warmup deg<0.5 {} ({max_up:.3})",
+        verdict(osc_ok)
+    );
+    println!(
+        "gate: snapshot integrity  {} ({snap_val:.4} vs {best_val:.4})",
+        verdict(snap_ok)
+    );
+    println!(
+        "gate: engine consistency  {} ({engine_nll:.4} vs {best_val:.4}+0.35)",
+        verdict(!engine_ok)
+    );
+    println!("artifact: {out_path}");
+    let engine_pass = !engine_ok;
+    if val_ok && osc_ok && snap_ok && engine_pass {
+        println!("M4.4 GATE: PASS — the 28M model trains on the reference corpus and the artifact is the best-val snapshot");
+        Ok(())
+    } else {
+        Err(format!(
+            "M4.4 VERDICT: FAIL — artifact still emitted at {out_path}; gates: val={val_ok} osc={osc_ok} snap={snap_ok} engine={engine_pass}"
+        ))
     }
-    println!("M4.4 GATE: PASS — the 28M model trains on the reference corpus and the artifact is the best-val snapshot");
-    Ok(())
+}
+
+fn verdict(ok: bool) -> &'static str {
+    if ok {
+        "PASS"
+    } else {
+        "FAIL"
+    }
 }
 
 /// teacher-forced NLL of the val split through the SAME q8-quantized
@@ -968,8 +999,6 @@ fn eval_val(layers: &[L], embd_m: &[f32], out_norm: &[f32], cfg: &TinyConfig, va
     }
     (total / (t_len - 1) as f64) as f32
 }
-
-
 
 // --- shims to keep the example readable ---
 
