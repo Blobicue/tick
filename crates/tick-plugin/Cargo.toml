@@ -1,0 +1,16 @@
+[package]
+name = "tick-plugin"
+description = "The community plugin contract for tick-server: routes + a wedge-free inference Handle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["science"]
+keywords = ["llm", "plugin", "server"]
+
+[dependencies]
+tick-token.workspace = true
+axum.workspace = true
+tokio.workspace = true
+serde_json.workspace = true

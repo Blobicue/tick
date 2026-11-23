@@ -34,36 +34,11 @@ use tick_token::token::{decode, encode, Vocab};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt as _;
 
-/// Live view of the engine for the instant (non-parking) handlers.
-struct Shared {
-    loaded: bool,
-    busy: bool,
-    inflight: usize,
-    /// generation stats republished after each completion
-    last_gen: Option<Value>,
-}
-
-enum Cmd {
-    Generate {
-        prompt: Vec<u32>,
-        max_tokens: usize,
-        stop: Vec<u32>,
-        stream: Option<mpsc::UnboundedSender<String>>,
-        done: oneshot::Sender<Result<GenReply, String>>,
-    },
-}
-
-struct GenReply {
-    ids: Vec<u32>,
-    text: String,
-    prompt_len: usize,
-    secs: f32,
-    tok_s: f32,
-}
+use tick_plugin::{EngineCommand, EngineState, GenerateReply, Handle, TickPlugin};
 
 pub struct App {
-    cmd_tx: mpsc::UnboundedSender<Cmd>,
-    shared: Arc<RwLock<Shared>>,
+    cmd_tx: mpsc::UnboundedSender<EngineCommand>,
+    shared: Arc<RwLock<EngineState>>,
     pub vocab: Arc<Vocab>,
     pub eot: u32,
     pub key: String,
@@ -73,6 +48,18 @@ pub struct App {
 }
 
 impl App {
+    /// The plugin-facing view: same command channel, same snapshots.
+    pub fn handle(self: &Arc<Self>) -> Handle {
+        Handle::new(
+            self.cmd_tx.clone(),
+            Arc::clone(&self.shared),
+            Arc::clone(&self.vocab),
+            Arc::new(self.key.clone()),
+            self.max_tokens_cap,
+            self.eot,
+        )
+    }
+
     pub fn open(
         model_path: PathBuf,
         kv_cap: usize,
@@ -99,15 +86,19 @@ impl App {
         } else {
             model_path.clone()
         };
-        let g = Gguf::open(&gguf)?;
-        let vocab = Arc::new(Vocab::from_gguf(&g)?);
-        let eot = vocab
-            .token_to_id
-            .get("<|eot_id|>")
-            .copied()
-            .unwrap_or(128009);
+        // vocab source: the sibling gguf; when absent (e.g. a
+        // standalone tiny tickfile from tick-train), fall back to a
+        // byte-level vocab where id == byte value
+        let (vocab, eot) = if gguf.exists() {
+            let g = Gguf::open(&gguf)?;
+            let v = Arc::new(Vocab::from_gguf(&g)?);
+            let eot = v.token_to_id.get("<|eot_id|>").copied().unwrap_or(128009);
+            (v, eot)
+        } else {
+            (Arc::new(Vocab::byte_level()), u32::MAX)
+        };
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let shared = Arc::new(RwLock::new(Shared {
+        let shared = Arc::new(RwLock::new(EngineState {
             loaded: false,
             busy: false,
             inflight: 0,
@@ -141,13 +132,13 @@ impl App {
 fn inference_loop(
     model_path: PathBuf,
     kv_cap: usize,
-    mut cmd_rx: mpsc::UnboundedReceiver<Cmd>,
-    shared: Arc<RwLock<Shared>>,
+    mut cmd_rx: mpsc::UnboundedReceiver<EngineCommand>,
+    shared: Arc<RwLock<EngineState>>,
     vocab: Arc<Vocab>,
 ) {
     let mut model: Option<Model> = None;
     while let Some(cmd) = cmd_rx.blocking_recv() {
-        let Cmd::Generate {
+        let EngineCommand::Generate {
             prompt,
             max_tokens,
             stop,
@@ -192,7 +183,7 @@ fn inference_loop(
             });
         let secs = t0.elapsed().as_secs_f32();
         let n = res.as_ref().map(|(ids, _)| ids.len()).unwrap_or(0);
-        let reply = res.map(|(ids, _)| GenReply {
+        let reply = res.map(|(ids, _)| GenerateReply {
             text: decode(&ids, &vocab),
             ids,
             prompt_len,
@@ -216,20 +207,41 @@ fn inference_loop(
     }
 }
 
-pub async fn serve(bind: &str, app: Arc<App>) -> Result<(), String> {
-    let router = Router::new()
+/// The core routes (stateful) merged with every plugin's router.
+/// Route conflicts with reserved core paths panic here, at startup,
+/// where they belong.
+pub fn build_router(app: Arc<App>, plugins: Vec<Box<dyn TickPlugin>>) -> Router {
+    let mut router = Router::new()
         .route("/health", axum::routing::get(health))
         .route("/v1/models", axum::routing::get(models))
         .route("/tokenize", axum::routing::post(tokenize))
         .route("/v1/chat/completions", axum::routing::post(chat))
         .route("/telemetry", axum::routing::get(telemetry_snapshot))
-        .with_state(app);
+        .with_state(app.clone());
+    for p in plugins {
+        router = router.merge(p.router(app.handle()));
+    }
+    router
+}
+
+/// Serve with plugins mounted. The canonical entry for hosts that
+/// compose their own binary.
+pub async fn serve_with(
+    bind: &str,
+    app: Arc<App>,
+    plugins: Vec<Box<dyn TickPlugin>>,
+) -> Result<(), String> {
+    let router = build_router(app, plugins);
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|e| format!("bind {bind}: {e}"))?;
     axum::serve(listener, router)
         .await
         .map_err(|e| e.to_string())
+}
+
+pub async fn serve(bind: &str, app: Arc<App>) -> Result<(), String> {
+    serve_with(bind, app, Vec::new()).await
 }
 
 fn authed(headers: &HeaderMap, key: &str) -> bool {
@@ -344,7 +356,7 @@ async fn chat(
     };
     let (done_tx, done_rx) = oneshot::channel();
     app.cmd_tx
-        .send(Cmd::Generate {
+        .send(EngineCommand::Generate {
             prompt: prompt_tokens,
             max_tokens,
             stop: vec![app.eot],
@@ -364,7 +376,7 @@ async fn chat(
     let out = done_rx
         .await
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "engine stopped"))?
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.as_str()))?;
     let stop_hit = out.ids.len() < max_tokens;
     Ok(Json(json!({
         "choices": [{

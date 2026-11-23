@@ -19,7 +19,9 @@ token-exact parity tests.
 | [`tick-token`](crates/tick-token) | llama-bpe tokenizer: regex-free scanner over codepoint flags, GPT-2 merges, chat templates | tick-format |
 | [`tick-engine`](crates/tick-engine) | BitNet b1.58 inference: flash-attention regimes (one_chunk / tiled / split-kv), greedy generation, tickfile emission, profiling | tick-kernels, tick-format |
 | [`tick-train`](crates/tick-train) | from-scratch ternary QAT: abs-mean ternary view + straight-through estimator, q8 activation STE, best-val checkpointing | tick-kernels, tick-format |
-| [`tick-server`](crates/tick-server) | wedge-free OpenAI-compatible server (`/v1/chat/completions` stream + non-stream, `/tokenize`, `/telemetry`) | tick-engine, tick-token |
+| [`tick-plugin`](crates/tick-plugin) | the community plugin contract: routes + a wedge-free inference `Handle` | tick-token, axum |
+| [`tick-example-plugin`](crates/tick-example-plugin) | reference plugin (status board + ask); copy as a template | tick-plugin |
+| [`tick-server`](crates/tick-server) | wedge-free OpenAI-compatible server (`/v1/chat/completions` stream + non-stream, `/tokenize`, `/telemetry`) | tick-engine, tick-token, tick-plugin |
 
 Each crate has its own CI workflow (`.github/workflows/ci-<crate>.yml`)
 that runs on changes to its path only.
@@ -52,6 +54,34 @@ engine runs directly — the trainer's quantized forward matches engine
 inference to within thousandths of a nat. See
 [`crates/tick-train/examples`](crates/tick-train/examples) for the
 memorization, held-out-eval, and batched-QAT milestones (m41–m43).
+
+## Plugins
+
+Implement `TickPlugin`, get a `Router`, mount it:
+
+```rust
+use tick_plugin::{Handle, TickPlugin};
+
+struct StatusBoard;
+
+impl TickPlugin for StatusBoard {
+    fn name(&self) -> &'static str { "status-board" }
+    fn router(&self, handle: Handle) -> axum::Router {
+        axum::Router::new().route(
+            "/plugin/status",
+            axum::routing::get(move || async move {
+                let s = handle.status();
+                format!("busy={}", s.busy)
+            }),
+        )
+    }
+}
+
+// tick_server::server::serve_with(bind, app, vec![Box::new(StatusBoard)]).await
+```
+
+Plugin routes answer while generation streams — `tick-server`'s test
+suite proves it with a live generation in flight.
 
 ## Parity discipline
 

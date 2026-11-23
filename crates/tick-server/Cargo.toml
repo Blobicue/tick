@@ -14,7 +14,13 @@ tick-engine.workspace = true
 tick-kernels.workspace = true
 tick-token.workspace = true
 tick-format.workspace = true
+tick-plugin.workspace = true
 axum.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+tick-train.workspace = true
+tick-example-plugin.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json"] }

@@ -26,6 +26,25 @@ impl Vocab {
     /// tokens + merges + token types from gguf metadata (duplicate token
     /// texts resolve last-wins, duplicate merge pairs first-wins —
     /// llama.cpp semantics, and tok.py agrees on this vocabulary).
+    /// A byte-level vocab: id == byte value for 0..255. The fallback
+    /// for standalone tickfiles (e.g. tick-train tiny artifacts) that
+    /// ship without a sibling GGUF.
+    pub fn byte_level() -> Vocab {
+        let mut token_to_id = std::collections::HashMap::new();
+        let mut texts = Vec::with_capacity(256);
+        for b in 0u32..256 {
+            let c = char::from_u32(b).unwrap();
+            token_to_id.insert(c.to_string(), b);
+            texts.push(c.to_string());
+        }
+        Vocab {
+            token_to_id,
+            bpe_ranks: Default::default(),
+            specials: Vec::new(),
+            texts,
+        }
+    }
+
     pub fn from_meta(meta: &std::collections::BTreeMap<String, Value>) -> Result<Vocab, String> {
         let tokens = match meta.get("tokenizer.ggml.tokens") {
             Some(Value::Arr(a)) => a,

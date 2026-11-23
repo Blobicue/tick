@@ -1,0 +1,15 @@
+[package]
+name = "tick-example-plugin"
+description = "Reference tick-plugin: status board + ask endpoint; copy as a template"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+categories = ["science"]
+keywords = ["llm", "plugin", "example"]
+
+[dependencies]
+tick-plugin.workspace = true
+axum.workspace = true
+serde_json.workspace = true
