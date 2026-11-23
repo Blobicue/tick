@@ -1,0 +1,6 @@
+# The workspace publishes to our own registry backend (the
+# tick-registry instance at crates.gameladder.io). Manifests reference
+# it by name via `registry = "tick"`, so every cargo invocation in
+# this tree — CI runners included — needs this definition.
+[registries.tick]
+index = "sparse+https://crates.gameladder.io/idx/"
