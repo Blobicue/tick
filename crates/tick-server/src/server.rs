@@ -65,13 +65,19 @@ impl App {
         kv_cap: usize,
         max_tokens_cap: usize,
     ) -> Result<Arc<App>, String> {
-        let key = std::fs::read_to_string(
-            std::env::var("HOME").unwrap_or_else(|_| "/home/juzz".into())
-                + "/.config/omarchy-fleet/api-key",
-        )
-        .map_err(|e| format!("fleet key: {e}"))?
-        .trim()
-        .to_string();
+        // bearer key: TICK_SERVER_KEY env -> the omarchy-fleet key file
+        // -> a documented development default (tests, sandboxes)
+        let key = std::env::var("TICK_SERVER_KEY")
+            .ok()
+            .or_else(|| {
+                std::fs::read_to_string(
+                    std::env::var("HOME").unwrap_or_else(|_| ".".into())
+                        + "/.config/omarchy-fleet/api-key",
+                )
+                .ok()
+                .map(|k| k.trim().to_string())
+            })
+            .unwrap_or_else(|| "tick-dev".into());
         // the vocab always comes from the GGUF (identical in the
         // tickfile; the GGUF is always present on this machine)
         // the vocab source: the gguf next to a tickfile, or the file

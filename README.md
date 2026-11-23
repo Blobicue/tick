@@ -33,10 +33,13 @@ cargo install --git https://github.com/Blobicue/tick tick-server
 TICK_MODEL=/path/to/bitnet-b1.58-2B-4T.tick tick-server --port 8096
 ```
 
-The server accepts a tickfile (preferred) or a GGUF, resolves the
-vocab from a sibling `<name>-tq1_0.gguf` when loading a tickfile, and
-authenticates with a bearer key from `~/.config/omarchy-fleet/api-key`
-(override with `TICK_FLEET_KEY`).
+The server accepts a tickfile (preferred) or a GGUF and resolves the
+vocab from a sibling `<name>-tq1_0.gguf` when loading a tickfile (a
+standalone tickfile without a sibling falls back to a byte-level
+vocab — tick-train artifacts serve out of the box). The bearer key
+resolves from `TICK_SERVER_KEY`, then
+`~/.config/omarchy-fleet/api-key`, then the development default
+`tick-dev`.
 
 ## Quickstart: inference in Rust
 

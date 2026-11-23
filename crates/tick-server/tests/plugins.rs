@@ -29,6 +29,7 @@ fn tiny_tickfile(path: &str) -> Result<(), String> {
 
 #[tokio::test]
 async fn plugin_routes_never_park_behind_generation() {
+    std::env::set_var("TICK_SERVER_KEY", "test-key");
     let path = "/tmp/tick_plugin_wedge_test.tick";
     tiny_tickfile(path).expect("tiny tickfile");
     let app = App::open(path.into(), 8192, 4096).expect("app open");
