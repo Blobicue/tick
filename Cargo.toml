@@ -14,21 +14,21 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Blobicue/tick"
 homepage = "https://github.com/Blobicue/tick"
 
 [workspace.dependencies]
-tick-kernels = { path = "crates/tick-kernels", version = "0.1.0", registry = "tick" }
-tick-format = { path = "crates/tick-format", version = "0.1.0", registry = "tick" }
-tick-token = { path = "crates/tick-token", version = "0.1.0", registry = "tick" }
-tick-engine = { path = "crates/tick-engine", version = "0.1.0", registry = "tick" }
-tick-plugin = { path = "crates/tick-plugin", version = "0.1.0", registry = "tick" }
-tick-registry = { path = "crates/tick-registry", version = "0.1.0", registry = "tick" }
-tick-example-plugin = { path = "crates/tick-example-plugin", version = "0.1.0", registry = "tick" }
-tick-train = { path = "crates/tick-train", version = "0.1.0", registry = "tick" }
+tick-kernels = { path = "crates/tick-kernels", version = "0.1.1", registry = "tick" }
+tick-format = { path = "crates/tick-format", version = "0.1.1", registry = "tick" }
+tick-token = { path = "crates/tick-token", version = "0.1.1", registry = "tick" }
+tick-engine = { path = "crates/tick-engine", version = "0.1.1", registry = "tick" }
+tick-plugin = { path = "crates/tick-plugin", version = "0.1.1", registry = "tick" }
+tick-registry = { path = "crates/tick-registry", version = "0.1.1", registry = "tick" }
+tick-example-plugin = { path = "crates/tick-example-plugin", version = "0.1.1", registry = "tick" }
+tick-train = { path = "crates/tick-train", version = "0.1.1", registry = "tick" }
 libc = "0.2"
 axum = { version = "0.8", features = ["json"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util", "fs"] }
