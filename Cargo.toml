@@ -9,6 +9,7 @@ members = [
     "crates/tick-plugin",
     "crates/tick-example-plugin",
     "crates/tick-server",
+    "crates/tick-registry",
 ]
 
 [workspace.package]
@@ -28,7 +29,13 @@ tick-example-plugin = { path = "crates/tick-example-plugin", version = "0.1.0" }
 tick-train = { path = "crates/tick-train", version = "0.1.0" }
 libc = "0.2"
 axum = { version = "0.8", features = ["json"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util", "fs"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+serde = { version = "1", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
+sha2 = "0.10"
+hex = "0.4"
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"

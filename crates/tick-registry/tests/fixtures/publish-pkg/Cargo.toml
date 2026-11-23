@@ -1,0 +1,8 @@
+[package]
+name = "localtick-fixture"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "conformance fixture for the tick registry e2e test"
+
+[workspace]
