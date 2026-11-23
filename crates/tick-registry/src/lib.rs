@@ -336,6 +336,7 @@ async fn publish(State(reg): State<RegArc>, headers: HeaderMap, body: Bytes) -> 
     if let Err(e) = reg.save_state().await {
         return err_json(StatusCode::INTERNAL_SERVER_ERROR, &format!("state: {e}"));
     }
+    mirror(&reg.root);
     ok_json(json!({
         "warnings": {"invalid_categories": [], "invalid_badges": [], "other": []}
     }))
@@ -405,6 +406,7 @@ async fn yank_flip(
         ));
     }
     let _ = reg.save_state().await;
+    mirror(&reg.root);
     ok_json(json!({"ok": true}))
 }
 
@@ -480,6 +482,7 @@ async fn add_owners(
         }
     }
     let _ = reg.save_state().await;
+    mirror(&reg.root);
     ok_json(json!({"ok": true, "msg": "owners successfully added"}))
 }
 
@@ -528,6 +531,7 @@ async fn remove_owners(
         }
     }
     let _ = reg.save_state().await;
+    mirror(&reg.root);
     ok_json(json!({"ok": true, "msg": "owners successfully removed"}))
 }
 
@@ -548,6 +552,59 @@ async fn search(
         .collect();
     let total = hits.len();
     ok_json(json!({"crates": hits, "meta": {"total": total}}))
+}
+
+/// Best-effort mirror of the mutable registry state after a
+/// successful mutation (publish/yank/owners). Event-driven by design:
+/// no timers, the backup always reflects the last completed write.
+/// Mirror root: REGISTRY_MIRROR (default /home/juzz/tick-registry-mirror).
+pub fn mirror(root: &Path) {
+    // default: a SIBLING of the registry root, so test tempdirs mirror
+    // into their own sandboxes; production pins REGISTRY_MIRROR in the
+    // systemd unit
+    let mirror = std::env::var("REGISTRY_MIRROR").unwrap_or_else(|_| {
+        root.parent()
+            .unwrap_or(Path::new("/tmp"))
+            .join("tick-registry-mirror")
+            .to_string_lossy()
+            .into_owned()
+    });
+    for dir in ["index", "pkg-index", "state.json"] {
+        let src = root.join(dir);
+        if !src.exists() {
+            continue;
+        }
+        let dst = std::path::Path::new(&mirror).join(dir);
+        if src.is_file() {
+            let _ = std::fs::create_dir_all(dst.parent().unwrap());
+            let _ = std::fs::copy(&src, dst);
+        } else {
+            for entry in walk(&src) {
+                let rel = entry.strip_prefix(&src).unwrap();
+                let _ = std::fs::create_dir_all(dst.join(rel.parent().unwrap_or(Path::new(""))));
+                let _ = std::fs::copy(&entry, dst.join(rel));
+            }
+        }
+    }
+    let _ = std::fs::write(
+        std::path::Path::new(&mirror).join("MIRRORED_AT"),
+        chrono_like_now(),
+    );
+}
+
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    out
 }
 
 /// Minimal UTC timestamp in the index's allowed format. No chrono
@@ -751,6 +808,7 @@ async fn pkg_publish(State(reg): State<RegArc>, headers: HeaderMap, body: Bytes)
         ));
     }
     let _ = reg.save_state().await;
+    mirror(&reg.root);
     ok_json(json!({"ok": true, "cksum": cksum}))
 }
 
@@ -843,6 +901,7 @@ async fn pkg_yank_flip(
         ));
     }
     let _ = reg.save_state().await;
+    mirror(&reg.root);
     ok_json(json!({"ok": true}))
 }
 
