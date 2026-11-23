@@ -6,6 +6,8 @@
 // The forward pass mirrors the frozen reference graph op-for-op
 // (including its loop shapes and constant spellings); keep lints from
 // pushing mechanical rewrites of verified-parity code.
+// unknown-lints: bridges older toolchains that predate newer lint names
+#![allow(unknown_lints)]
 #![allow(unused_assignments)]
 #![allow(
     clippy::needless_range_loop,
