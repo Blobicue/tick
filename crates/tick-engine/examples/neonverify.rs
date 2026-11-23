@@ -9,6 +9,17 @@
 #![allow(unused_assignments)]
 #![allow(dead_code)]
 fn main() -> Result<(), String> {
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        eprintln!("NEON probe: aarch64-only (vector kernels do not exist on this arch)");
+        return Ok(());
+    }
+    #[cfg(target_arch = "aarch64")]
+    run()
+}
+
+#[cfg(target_arch = "aarch64")]
+fn run() -> Result<(), String> {
     let path = "/home/juzz/models/bitnet/bitnet-b1.58-2B-4T-tq1_0.gguf";
     let mut m = tick_engine::model::Model::open(std::path::Path::new(path), 64)?;
 
